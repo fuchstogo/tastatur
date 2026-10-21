@@ -8,8 +8,6 @@
 <body>
 <title>Tastatur-Check</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap">
 <style>
 /* Layout: eine zentrierte Arbeitsfläche, oben Fortschritt, darunter Aufgabe und die Tastatur als Hauptobjekt */
 :root{
@@ -219,6 +217,7 @@ const PW_HASH = "debc5ed9";
 // Vorausgefüllter Microsoft-Forms-Link. In den Feldern stehen als Platzhalter: NAME, KLASSE, PUNKTE, CODE
 const FORMS_URL = "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=v3tHWyJg1Uam_tYFKtvUMpmEX1JlcGxKpFxPkz7vT31UMDdTT1RURUhEME1IRlY5QkhPVjQ1MDA2Ry4u&rc69727142b044b98bd745cab00ad2f95=NAME&r3099cdb54fc9499d9a8e808d8a7c41ec=KLASSE&r8a9aa4a2dd5645e587057b5fa4ceccde=PUNKTE&r85c22f8aa3424bebb21bba377b3cb206=CODE";
 const MAX_TRIES = 2;
+const START_PW_HASH = "8767f88c"; // Start-Passwort (Gross-/Kleinschreibung egal)
 
 /* ===================== Tastatur (CH) ===================== */
 const NAMES = {fn:"Fn",ctrl:"Strg (Ctrl)",shift:"Shift",alt:"Alt",altgr:"Alt Gr",win:"Win",tab:"Tab",caps:"Feststell",enter:"Enter",backspace:"Rücktaste",esc:"Esc",del:"Entf",print:"Druck",space:"Leertaste",menu:"Menü",left:"←",right:"→",up:"↑",down:"↓"};
@@ -237,9 +236,15 @@ const ROWS = [
 /* ===================== Zustand ===================== */
 let S = null; // Prüfungszustand
 const store = {
-  get(){ try{ return JSON.parse(localStorage.getItem("tk-state")||"null"); }catch{ return null; } },
-  set(v){ try{ localStorage.setItem("tk-state", JSON.stringify(v)); }catch{} },
-  clear(){ try{ localStorage.removeItem("tk-state"); }catch{} }
+  get(){ try{
+    const raw=localStorage.getItem("tk-state"); if(!raw) return null;
+    const [b,sg]=raw.split("~"); const json=decodeURIComponent(escape(xorStr(atob(b))));
+    const v=JSON.parse(json); if(sig(json)!==sg) v.tampered=true; return v;
+  }catch{ return localStorage.getItem("tk-state")?{broken:true}:null; } },
+  set(v){ try{ const json=JSON.stringify(v); localStorage.setItem("tk-state", btoa(xorStr(unescape(encodeURIComponent(json))))+"~"+sig(json)); }catch{} },
+  clear(){ try{ localStorage.removeItem("tk-state"); }catch{} },
+  starts(){ try{ return +(localStorage.getItem("tk-n")||0); }catch{ return 0; } },
+  addStart(){ try{ const n=this.starts()+1; localStorage.setItem("tk-n",String(n)); return n; }catch{ return 1; } }
 };
 const $app = document.getElementById("app");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -261,28 +266,43 @@ const capReady = (async()=>{
 /* ===================== Ansichten ===================== */
 function setWho(){ document.getElementById("who").textContent = S ? `${S.name}${S.klasse?" · "+S.klasse:""}` : ""; }
 
+let unlocked=false;
 function viewLogin(){
   setWho();
   const saved = store.get();
+  const locked = !unlocked && (store.starts()>0 || !!saved);
   $app.innerHTML = `
   <section class="panel">
     <span class="eyebrow">Anmeldung</span>
     <h1>Zeig, was du auf der Tastatur kannst.</h1>
     <p class="muted">Teil 1: Du klickst Tasten und Tastenkombinationen auf der Bildschirm-Tastatur an. Pro Aufgabe hast du ${MAX_TRIES} Versuche. Teil 2: Fragen zu den Arbeitsblättern.</p>
     <p class="muted">Benutze nur die Maus. Echte Tastenkombinationen auf deiner Tastatur werden nicht gezählt.</p>
-    ${saved && !saved.done ? `<div class="fb warn">Für ${esc(saved.name)} gibt es einen angefangenen Durchgang. <button type="button" id="resume" style="margin-left:8px">Weitermachen</button></div>`:""}
-    <form id="loginForm" class="grid2">
+    ${saved && !saved.broken && !saved.done ? `<div class="fb warn">Für ${esc(saved.name)} gibt es einen angefangenen Durchgang. <button type="button" id="resume" style="margin-left:8px">Weitermachen</button></div>`:""}
+    ${saved && !saved.broken && saved.done ? `<div class="fb ok">${esc(saved.name)} hat bereits abgegeben. <button type="button" id="resume" style="margin-left:8px">Abgabe anzeigen</button></div>`:""}
+    ${locked ? `<div class="fb warn">Auf diesem Gerät wurde schon ein Durchgang gestartet. Einen neuen Durchgang kann nur die Lehrperson freigeben.</div>
+    <form id="unlockForm" class="row"><div class="field" style="flex:1;min-width:200px"><label for="upw">Passwort der Lehrperson</label><input type="password" id="upw" autocomplete="off"></div><button type="submit" style="align-self:flex-end">Freigeben</button></form>
+    <div id="upwMsg" class="fb bad" hidden>Falsches Passwort.</div>`:""}
+    <form id="loginForm" class="grid2" ${locked?"hidden":""}>
       <div class="field"><label for="nm">Vorname und Nachname</label><input type="text" id="nm" autocomplete="off" required minlength="3" placeholder="z. B. Lena Keller"></div>
       <div class="field"><label for="kl">Klasse</label><input type="text" id="kl" autocomplete="off" placeholder="z. B. 1a"></div>
+      <div class="field"><label for="spw">Start-Passwort</label><input type="password" id="spw" autocomplete="off" placeholder="Sagt dir die Lehrperson"></div>
       <div><button class="primary" type="submit">Starten</button></div>
     </form>
+    <div id="spwMsg" class="fb bad" hidden>Das Start-Passwort stimmt nicht.</div>
   </section>`;
   document.getElementById("resume")?.addEventListener("click",()=>{ S=saved; route(); });
+  document.getElementById("unlockForm")?.addEventListener("submit",e=>{
+    e.preventDefault();
+    if(fnv(document.getElementById("upw").value)===PW_HASH){ unlocked=true; store.clear(); viewLogin(); }
+    else document.getElementById("upwMsg").hidden=false;
+  });
   document.getElementById("loginForm").addEventListener("submit",e=>{
     e.preventDefault();
     const name=document.getElementById("nm").value.trim().replace(/\s+/g," ");
     if(name.length<3) return;
-    S={ name, klasse:document.getElementById("kl").value.trim(), start:Date.now(),
+    if(fnv(document.getElementById("spw").value.trim().toLowerCase())!==START_PW_HASH){ document.getElementById("spwMsg").hidden=false; return; }
+    unlocked=false;
+    S={ name, klasse:document.getElementById("kl").value.trim(), start:Date.now(), starts:store.addStart(),
         order:shuffle(TASKS.map(t=>t.id)), i:0, tries:0, sel:[], phase:"task", items:{}, answers:{}, done:false, runId:Date.now().toString(36)+Math.random().toString(36).slice(2,7) };
     store.set(S); route();
   });
@@ -321,7 +341,7 @@ function viewTask(fb){
   setWho();
   const t=currentTask(), n=S.order.length, total=n+QUESTIONS.length;
   const locked = !!fb && (fb.type==="ok" || fb.type==="final");
-  const sol = fb && fb.type==="final" ? t.keys : null;
+  const sol = null;
   $app.innerHTML=`
   <section class="panel">
     <div class="row" style="justify-content:space-between">
@@ -356,7 +376,7 @@ function viewTask(fb){
         viewTask({type:"retry",msg:`Leider falsch (${ans}). Du hast noch ${MAX_TRIES-S.tries} Versuch.`});
       }else{
         rec.ok=false; rec.tries=S.tries; S.items[t.id]=rec; S.sel=[]; store.set(S);
-        viewTask({type:"final",msg:`Leider falsch. Richtig wäre: ${comboStr(t.keys)}`});
+        viewTask({type:"final",msg:"Leider falsch. Diese Aufgabe gibt keinen Punkt."});
       }
     };
   }else{
@@ -369,6 +389,15 @@ function viewTask(fb){
   }
 }
 
+function qOrder(){
+  if(!S.qorder){ S.qorder=shuffle(QUESTIONS.map(q=>q.id)); store.set(S); }
+  return S.qorder.map(id=>QUESTIONS.find(q=>q.id===id)).filter(Boolean);
+}
+function optOrder(q){
+  S.oorder=S.oorder||{};
+  if(!S.oorder[q.id]){ S.oorder[q.id]=shuffle(q.o.map((_,i)=>i)); store.set(S); }
+  return S.oorder[q.id];
+}
 function viewQuestions(){
   setWho();
   const total=S.order.length+QUESTIONS.length;
@@ -378,10 +407,10 @@ function viewQuestions(){
     <div class="progress"><i style="width:${(S.order.length/total)*100}%"></i></div>
     <h1>Wähle jeweils die richtige Antwort.</h1>
     <form id="qForm" style="display:flex;flex-direction:column;gap:18px">
-      ${QUESTIONS.map((q,qi)=>`
+      ${qOrder().map((q,qi)=>`
       <fieldset class="q" style="border:0;padding:0;margin:0">
         <legend style="font-weight:700;margin-bottom:8px">${qi+1}. ${esc(q.p)}</legend>
-        <div class="opts">${q.o.map((o,oi)=>`<label class="opt"><input type="radio" name="${q.id}" id="${q.id}_${oi}" value="${oi}" ${S.answers[q.id]===oi?"checked":""}><span style="font-weight:400">${esc(o)}</span></label>`).join("")}</div>
+        <div class="opts">${optOrder(q).map(oi=>[q.o[oi],oi]).map(([o,oi])=>`<label class="opt"><input type="radio" name="${q.id}" id="${q.id}_${oi}" value="${oi}" ${S.answers[q.id]===oi?"checked":""}><span style="font-weight:400">${esc(o)}</span></label>`).join("")}</div>
       </fieldset>`).join("")}
       <div id="qMsg" class="fb warn" hidden></div>
       <div><button class="primary" type="submit">Abgeben</button></div>
@@ -403,7 +432,7 @@ function buildRun(){
   const q=QUESTIONS.map(x=>({id:x.id,ok:S.answers[x.id]===x.a,a:S.answers[x.id]??-1}));
   const sPts=items.reduce((s,i)=>s+(i.ok?(i.tries===1?1:0.5):0),0);
   const qPts=q.filter(x=>x.ok).length;
-  return {v:1,runId:S.runId,name:S.name,klasse:S.klasse,start:S.start,end:Date.now(),items,q,sPts,sMax:items.length,qPts,qMax:q.length};
+  return {v:1,runId:S.runId,name:S.name,klasse:S.klasse,start:S.start,end:S.end||(S.end=Date.now()),items,q,sPts,sMax:items.length,qPts,qMax:q.length,starts:S.starts||1,tampered:!!S.tampered};
 }
 function encodeRun(run){
   const json=JSON.stringify(run);
@@ -412,34 +441,38 @@ function encodeRun(run){
 }
 function b64e(str){return btoa(unescape(encodeURIComponent(str))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 function b64d(b){b=b.replace(/-/g,"+").replace(/_/g,"/");while(b.length%4)b+="=";return decodeURIComponent(escape(atob(b)));}
+const SALT="osc-buergli-7x";
+function xorStr(str){const k=SALT+"k";let o="";for(let i=0;i<str.length;i++)o+=String.fromCharCode(str.charCodeAt(i)^k.charCodeAt(i%k.length)^((i*31)&255));return o;}
+function sig(json){return fnv(SALT+json+SALT.split("").reverse().join(""))+fnv(json+SALT);}
 function encodeShort(run){
   const it=TASKS.map(t=>{const i=run.items.find(x=>x.id===t.id);return !i||!i.ok?"0":String(i.tries);}).join("");
   const qa=QUESTIONS.map(q=>{const x=run.q.find(y=>y.id===q.id);return x&&x.a>=0?String(x.a):"9";}).join("");
-  const json=JSON.stringify([run.name,run.klasse,run.start.toString(36),run.end.toString(36),it,qa]);
-  return `TK2.${b64e(json)}.${fnv(json)}`;
+  const json=JSON.stringify([run.name,run.klasse,run.start.toString(36),run.end.toString(36),it,qa,run.starts||1,run.tampered?1:0]);
+  return `TK3.${btoa(xorStr(unescape(encodeURIComponent(json)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}.${sig(json)}`;
 }
 function decodeShort(code){
-  const m=code.trim().match(/^TK2\.([A-Za-z0-9_-]+)\.([0-9a-f]+)$/);
+  const m=code.trim().match(/^TK3\.([A-Za-z0-9_-]+)\.([0-9a-f]+)$/);
   if(!m) return null;
   try{
-    const json=b64d(m[1]); if(fnv(json)!==m[2]) return null;
-    const [name,klasse,st,en,it,qa]=JSON.parse(json);
+    let b=m[1].replace(/-/g,"+").replace(/_/g,"/");while(b.length%4)b+="=";
+    const json=decodeURIComponent(escape(xorStr(atob(b)))); if(sig(json)!==m[2]) return null;
+    const [name,klasse,st,en,it,qa,starts,tp]=JSON.parse(json);
     const items=TASKS.map((t,k)=>{const d=+(it[k]||0);return{id:t.id,ok:d>0,tries:d||MAX_TRIES,a:""};});
     const q=QUESTIONS.map((x,k)=>{const a=+(qa[k]??9);return{id:x.id,ok:a===x.a,a:a===9?-1:a};});
     const sPts=items.reduce((s,i)=>s+(i.ok?(i.tries===1?1:0.5):0),0), qPts=q.filter(x=>x.ok).length;
-    return {v:2,runId:"c"+m[2],name,klasse,start:parseInt(st,36),end:parseInt(en,36),items,q,sPts,sMax:items.length,qPts,qMax:q.length};
+    return {v:2,runId:"c"+m[2],name,klasse,start:parseInt(st,36),end:parseInt(en,36),items,q,sPts,sMax:items.length,qPts,qMax:q.length,starts:starts||1,tampered:!!tp};
   }catch{ return null; }
 }
 function formsLink(run,code){
   if(!FORMS_URL) return "";
   try{
-    const u=new URL(FORMS_URL), map={NAME:run.name,KLASSE:run.klasse||"-",PUNKTE:`${run.sPts+run.qPts} / ${run.sMax+run.qMax} (${pct(run)} %)`,CODE:code};
+    const u=new URL(FORMS_URL), map={NAME:run.name,KLASSE:run.klasse||"-",PUNKTE:"siehe Auswertung",CODE:code};
     for(const [k,v] of [...u.searchParams]) if(map[v.trim().toUpperCase()]!==undefined) u.searchParams.set(k,map[v.trim().toUpperCase()]);
     return u.toString();
   }catch{ return ""; }
 }
 function decodeRun(code){
-  if(/^TK2\./.test(code.trim())) return decodeShort(code);
+  if(/^TK3\./.test(code.trim())) return decodeShort(code);
   const m=code.trim().match(/^TK1\.([A-Za-z0-9_-]+)\.([0-9a-f]+)$/);
   if(!m) return null;
   try{
@@ -451,7 +484,7 @@ function decodeRun(code){
 }
 
 async function finish(){
-  S.done=true; S.phase="done"; store.set(S);
+  S.done=true; S.phase="done"; buildRun(); store.set(S);
   const run=buildRun();
   $app.innerHTML=`<section class="panel"><span class="eyebrow">Abgabe</span><h1>Wird gespeichert …</h1></section>`;
   let saved=false;
@@ -490,7 +523,7 @@ function viewDone(run,saved){
     try{ await navigator.clipboard.writeText(code); out.textContent="Kopiert."; }
     catch{ const r=document.createRange(); r.selectNodeContents(document.getElementById("code")); const s=getSelection(); s.removeAllRanges(); s.addRange(r); out.textContent="Markiert. Jetzt mit Strg + C kopieren."; }
   };
-  document.getElementById("again").onclick=()=>{ store.clear(); S=null; route(); };
+  document.getElementById("again").onclick=()=>{ S=null; viewLogin(); };
 }
 
 /* ===================== Auswertung (Lehrperson) ===================== */
@@ -575,11 +608,11 @@ function viewTeacher(note, detailId){
   <section class="panel">
     <h2>Schüler:innen</h2>
     ${list.length?`<div class="tablewrap"><table>
-      <thead><tr><th>Name</th><th>Klasse</th><th>Abgabe</th><th>Shortcuts</th><th>Fragen</th><th>Total</th><th>Quelle</th></tr></thead>
+      <thead><tr><th>Name</th><th>Klasse</th><th>Abgabe</th><th>Shortcuts</th><th>Fragen</th><th>Total</th><th>Hinweis</th><th>Quelle</th></tr></thead>
       <tbody>${list.map(r=>`<tr class="clickable" data-id="${esc(r.runId)}" tabindex="0">
         <td><b>${esc(r.name)}</b></td><td>${esc(r.klasse||"–")}</td><td class="num">${fmtDate(r.end)}</td>
         <td class="num">${r.sPts} / ${r.sMax}</td><td class="num">${r.qPts} / ${r.qMax}</td>
-        <td><span class="pill ${pillCls(pct(r))}">${pct(r)} %</span></td><td class="muted">${r.src}</td></tr>`).join("")}</tbody>
+        <td><span class="pill ${pillCls(pct(r))}">${pct(r)} %</span></td><td>${r.tampered?'<span class="pill bad">manipuliert</span> ':""}${(r.starts||1)>1?`<span class="pill warn">${r.starts}. Durchgang</span>`:""}</td><td class="muted">${r.src}</td></tr>`).join("")}</tbody>
     </table></div><p class="muted" style="font-size:.85rem">Zeile anklicken für die Details.</p>`:
     `<p class="muted">Noch keine Abgaben. Sobald Schüler:innen fertig sind, erscheinen sie hier. Abgabe-Codes kannst du unten einfügen.</p>`}
   </section>
@@ -617,15 +650,15 @@ function viewTeacher(note, detailId){
   };
   document.getElementById("import").onclick=async()=>{
     const lines=document.getElementById("codes").value.split(/\s+/).filter(Boolean);
-    const m=document.getElementById("impMsg"); let ok=0, bad=0;
+    const m=document.getElementById("impMsg"); let ok=0, bad=0, badList=[];
     for(const l of lines){
       const r=decodeRun(l);
-      if(!r){bad++;continue;}
+      if(!r){bad++;badList.push(l.slice(0,24)+"…");continue;}
       if(db){ try{ await db.doc(`imports/${r.runId}`).set(r); }catch{} } else addLocalImport(l);
       if(!runs.some(x=>x.runId===r.runId)) runs.push({...r,src:"Code"});
       ok++;
     }
-    m.textContent=`${ok} übernommen${bad?`, ${bad} ungültig`:""}.`;
+    m.textContent=`${ok} übernommen${bad?`, ${bad} ungültig oder verändert: ${badList.join(", ")}`:""}.`;
     if(ok) setTimeout(()=>viewTeacher(note),700);
   };
 }

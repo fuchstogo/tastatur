@@ -8,8 +8,6 @@
 <body>
 <title>Tastatur-Check Test</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap">
 <style>
 /* Layout: eine zentrierte Arbeitsfläche, oben Fortschritt, darunter Aufgabe und die Tastatur als Hauptobjekt */
 :root{
@@ -152,6 +150,7 @@ const PW_HASH = "debc5ed9";
 // Vorausgefüllter Microsoft-Forms-Link. In den Feldern stehen als Platzhalter: NAME, KLASSE, PUNKTE, CODE
 const FORMS_URL = "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=v3tHWyJg1Uam_tYFKtvUMpmEX1JlcGxKpFxPkz7vT31UMDdTT1RURUhEME1IRlY5QkhPVjQ1MDA2Ry4u&rc69727142b044b98bd745cab00ad2f95=NAME&r3099cdb54fc9499d9a8e808d8a7c41ec=KLASSE&r8a9aa4a2dd5645e587057b5fa4ceccde=PUNKTE&r85c22f8aa3424bebb21bba377b3cb206=CODE";
 const MAX_TRIES = 2;
+const START_PW_HASH = "8767f88c"; // Start-Passwort (Gross-/Kleinschreibung egal)
 
 /* ===================== Tastatur (CH) ===================== */
 const NAMES = {fn:"Fn",ctrl:"Strg (Ctrl)",shift:"Shift",alt:"Alt",altgr:"Alt Gr",win:"Win",tab:"Tab",caps:"Feststell",enter:"Enter",backspace:"Rücktaste",esc:"Esc",del:"Entf",print:"Druck",space:"Leertaste",menu:"Menü",left:"←",right:"→",up:"↑",down:"↓"};
@@ -219,8 +218,10 @@ function viewLogin(){
     <form id="loginForm" class="grid2" ${locked?"hidden":""}>
       <div class="field"><label for="nm">Vorname und Nachname</label><input type="text" id="nm" autocomplete="off" required minlength="3" placeholder="z. B. Lena Keller"></div>
       <div class="field"><label for="kl">Klasse</label><input type="text" id="kl" autocomplete="off" placeholder="z. B. 1a"></div>
+      <div class="field"><label for="spw">Start-Passwort</label><input type="password" id="spw" autocomplete="off" placeholder="Sagt dir die Lehrperson"></div>
       <div><button class="primary" type="submit">Starten</button></div>
     </form>
+    <div id="spwMsg" class="fb bad" hidden>Das Start-Passwort stimmt nicht.</div>
   </section>`;
   document.getElementById("resume")?.addEventListener("click",()=>{ S=saved; route(); });
   document.getElementById("unlockForm")?.addEventListener("submit",e=>{
@@ -232,6 +233,7 @@ function viewLogin(){
     e.preventDefault();
     const name=document.getElementById("nm").value.trim().replace(/\s+/g," ");
     if(name.length<3) return;
+    if(fnv(document.getElementById("spw").value.trim().toLowerCase())!==START_PW_HASH){ document.getElementById("spwMsg").hidden=false; return; }
     unlocked=false;
     S={ name, klasse:document.getElementById("kl").value.trim(), start:Date.now(), starts:store.addStart(),
         order:shuffle(TASKS.map(t=>t.id)), i:0, tries:0, sel:[], phase:"task", items:{}, answers:{}, done:false, runId:Date.now().toString(36)+Math.random().toString(36).slice(2,7) };
@@ -320,6 +322,15 @@ function viewTask(fb){
   }
 }
 
+function qOrder(){
+  if(!S.qorder){ S.qorder=shuffle(QUESTIONS.map(q=>q.id)); store.set(S); }
+  return S.qorder.map(id=>QUESTIONS.find(q=>q.id===id)).filter(Boolean);
+}
+function optOrder(q){
+  S.oorder=S.oorder||{};
+  if(!S.oorder[q.id]){ S.oorder[q.id]=shuffle(q.o.map((_,i)=>i)); store.set(S); }
+  return S.oorder[q.id];
+}
 function viewQuestions(){
   setWho();
   const total=S.order.length+QUESTIONS.length;
@@ -329,10 +340,10 @@ function viewQuestions(){
     <div class="progress"><i style="width:${(S.order.length/total)*100}%"></i></div>
     <h1>Wähle jeweils die richtige Antwort.</h1>
     <form id="qForm" style="display:flex;flex-direction:column;gap:18px">
-      ${QUESTIONS.map((q,qi)=>`
+      ${qOrder().map((q,qi)=>`
       <fieldset class="q" style="border:0;padding:0;margin:0">
         <legend style="font-weight:700;margin-bottom:8px">${qi+1}. ${esc(q.p)}</legend>
-        <div class="opts">${q.o.map((o,oi)=>`<label class="opt"><input type="radio" name="${q.id}" id="${q.id}_${oi}" value="${oi}" ${S.answers[q.id]===oi?"checked":""}><span style="font-weight:400">${esc(o)}</span></label>`).join("")}</div>
+        <div class="opts">${optOrder(q).map(oi=>[q.o[oi],oi]).map(([o,oi])=>`<label class="opt"><input type="radio" name="${q.id}" id="${q.id}_${oi}" value="${oi}" ${S.answers[q.id]===oi?"checked":""}><span style="font-weight:400">${esc(o)}</span></label>`).join("")}</div>
       </fieldset>`).join("")}
       <div id="qMsg" class="fb warn" hidden></div>
       <div><button class="primary" type="submit">Abgeben</button></div>
